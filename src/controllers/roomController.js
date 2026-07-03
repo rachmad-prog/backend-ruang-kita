@@ -252,13 +252,16 @@ async function uploadRoomImages(req, res, next) {
       order += 1;
     }
 
-    const roomResult = await pool.query(
-      "SELECT image_url FROM rooms WHERE id = $1",
+    // Setelah upload foto baru, cek ulang urutan foto (sort_order ASC) supaya
+    // kolom rooms.image_url (dipakai di halaman listing) selalu mengikuti foto
+    // pertama yang berlaku saat ini -- bukan cuma diisi sekali waktu masih null.
+    const firstImageResult = await pool.query(
+      "SELECT image_url FROM room_images WHERE room_id = $1 ORDER BY sort_order ASC, id ASC LIMIT 1",
       [id],
     );
-    if (!roomResult.rows[0].image_url) {
+    if (firstImageResult.rows.length > 0) {
       await pool.query("UPDATE rooms SET image_url = $1 WHERE id = $2", [
-        inserted[0].image_url,
+        firstImageResult.rows[0].image_url,
         id,
       ]);
     }
@@ -287,11 +290,31 @@ async function deleteRoomImage(req, res, next) {
     // Hapus juga asset-nya di Cloudinary supaya storage tidak menumpuk.
     // Hanya coba hapus kalau URL memang dari Cloudinary (foto lama sebelum migrasi mungkin masih path lokal).
     if (image.image_url.includes("res.cloudinary.com")) {
-      const match = image.image_url.match(/\/upload\/(?:v\d+\/)?(.+)\.[a-zA-Z0-9]+$/);
+      const match = image.image_url.match(
+        /\/upload\/(?:v\d+\/)?(.+)\.[a-zA-Z0-9]+$/,
+      );
       if (match) {
         const publicId = match[1];
         cloudinary.uploader.destroy(publicId).catch(() => {});
       }
+    }
+
+    // Kalau foto yang dihapus adalah cover (rooms.image_url), sinkronkan ulang
+    // ke foto pertama yang tersisa (atau null kalau sudah tidak ada foto sama sekali)
+    // supaya halaman listing tidak menampilkan foto yang sudah dihapus.
+    const roomResult = await pool.query(
+      "SELECT image_url FROM rooms WHERE id = $1",
+      [id],
+    );
+    if (roomResult.rows[0].image_url === image.image_url) {
+      const nextImage = await pool.query(
+        "SELECT image_url FROM room_images WHERE room_id = $1 ORDER BY sort_order ASC, id ASC LIMIT 1",
+        [id],
+      );
+      await pool.query("UPDATE rooms SET image_url = $1 WHERE id = $2", [
+        nextImage.rows.length > 0 ? nextImage.rows[0].image_url : null,
+        id,
+      ]);
     }
 
     res.json({ message: "Foto berhasil dihapus." });
