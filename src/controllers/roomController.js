@@ -196,7 +196,7 @@ async function updateRoom(req, res, next) {
   }
 }
 
-// DELETE /api/rooms/:id (admin) - soft delete
+// DELETE /api/rooms/:id (admin) - hapus permanen
 async function deleteRoom(req, res, next) {
   try {
     const { id } = req.params;
@@ -206,8 +206,40 @@ async function deleteRoom(req, res, next) {
     if (existing.rows.length === 0) {
       return res.status(404).json({ message: "Room tidak ditemukan." });
     }
-    await pool.query("UPDATE rooms SET is_active = 0 WHERE id = $1", [id]);
-    res.json({ message: "Room berhasil dinonaktifkan." });
+
+    // Jangan izinkan hapus permanen kalau room ini masih punya riwayat booking,
+    // supaya data booking lama tidak jadi yatim (room_id menunjuk ke data yang sudah hilang).
+    // Kalau memang mau disembunyikan dari listing, gunakan toggle "Aktif" saja.
+    const bookingCheck = await pool.query(
+      "SELECT id FROM bookings WHERE room_id = $1 LIMIT 1",
+      [id],
+    );
+    if (bookingCheck.rows.length > 0) {
+      return res.status(400).json({
+        message:
+          "Ruang ini masih punya riwayat booking, tidak bisa dihapus permanen. Nonaktifkan saja lewat toggle Aktif.",
+      });
+    }
+
+    // Hapus semua foto terkait (Cloudinary + baris room_images) sebelum hapus room-nya.
+    const images = await pool.query(
+      "SELECT * FROM room_images WHERE room_id = $1",
+      [id],
+    );
+    for (const image of images.rows) {
+      if (image.image_url && image.image_url.includes("res.cloudinary.com")) {
+        const match = image.image_url.match(
+          /\/upload\/(?:v\d+\/)?(.+)\.[a-zA-Z0-9]+$/,
+        );
+        if (match) {
+          cloudinary.uploader.destroy(match[1]).catch(() => {});
+        }
+      }
+    }
+    await pool.query("DELETE FROM room_images WHERE room_id = $1", [id]);
+    await pool.query("DELETE FROM rooms WHERE id = $1", [id]);
+
+    res.json({ message: "Room berhasil dihapus permanen." });
   } catch (err) {
     next(err);
   }
@@ -290,9 +322,7 @@ async function deleteRoomImage(req, res, next) {
     // Hapus juga asset-nya di Cloudinary supaya storage tidak menumpuk.
     // Hanya coba hapus kalau URL memang dari Cloudinary (foto lama sebelum migrasi mungkin masih path lokal).
     if (image.image_url.includes("res.cloudinary.com")) {
-      const match = image.image_url.match(
-        /\/upload\/(?:v\d+\/)?(.+)\.[a-zA-Z0-9]+$/,
-      );
+      const match = image.image_url.match(/\/upload\/(?:v\d+\/)?(.+)\.[a-zA-Z0-9]+$/);
       if (match) {
         const publicId = match[1];
         cloudinary.uploader.destroy(publicId).catch(() => {});
