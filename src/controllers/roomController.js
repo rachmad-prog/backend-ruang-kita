@@ -1,6 +1,5 @@
 const { pool } = require("../config/db");
-const fs = require("fs");
-const path = require("path");
+const cloudinary = require("../config/cloudinary");
 
 // Kategori yang didukung. Dipakai untuk validasi ringan di createRoom/updateRoom.
 const ALLOWED_CATEGORIES = [
@@ -238,15 +237,16 @@ async function uploadRoomImages(req, res, next) {
     let order = orderResult.rows[0].maxOrder + 1;
     const inserted = [];
     for (const file of files) {
-      const relativeUrl = `/uploads/rooms/${file.filename}`;
+      // file.path = secure_url dari Cloudinary (URL publik yang bisa langsung diakses)
+      const imageUrl = file.path;
       const result = await pool.query(
         "INSERT INTO room_images (room_id, image_url, sort_order) VALUES ($1, $2, $3) RETURNING id",
-        [id, relativeUrl, order],
+        [id, imageUrl, order],
       );
       inserted.push({
         id: result.rows[0].id,
         room_id: Number(id),
-        image_url: relativeUrl,
+        image_url: imageUrl,
         sort_order: order,
       });
       order += 1;
@@ -284,13 +284,15 @@ async function deleteRoomImage(req, res, next) {
 
     await pool.query("DELETE FROM room_images WHERE id = $1", [imageId]);
 
-    const filePath = path.join(
-      __dirname,
-      "..",
-      "..",
-      image.image_url.replace(/^\//, ""),
-    );
-    fs.unlink(filePath, () => {});
+    // Hapus juga asset-nya di Cloudinary supaya storage tidak menumpuk.
+    // Hanya coba hapus kalau URL memang dari Cloudinary (foto lama sebelum migrasi mungkin masih path lokal).
+    if (image.image_url.includes("res.cloudinary.com")) {
+      const match = image.image_url.match(/\/upload\/(?:v\d+\/)?(.+)\.[a-zA-Z0-9]+$/);
+      if (match) {
+        const publicId = match[1];
+        cloudinary.uploader.destroy(publicId).catch(() => {});
+      }
+    }
 
     res.json({ message: "Foto berhasil dihapus." });
   } catch (err) {

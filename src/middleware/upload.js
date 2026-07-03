@@ -1,25 +1,23 @@
-const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const multer = require("multer");
+const { CloudinaryStorage } = require("multer-storage-cloudinary");
+const cloudinary = require("../config/cloudinary");
 
-// Semua file yang diupload disimpan di backend/uploads/rooms
-const UPLOAD_DIR = path.join(__dirname, '..', '..', 'uploads', 'rooms');
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`;
-    cb(null, unique);
+// File diupload langsung ke Cloudinary (bukan disimpan di disk server),
+// karena di Vercel folder project bersifat read-only saat runtime.
+const storage = new CloudinaryStorage({
+  cloudinary,
+  params: {
+    folder: "ruang-kita/rooms",
+    allowed_formats: ["jpg", "jpeg", "png", "webp", "gif"],
+    transformation: [{ width: 1600, crop: "limit" }], // batasi lebar maksimal, hemat storage
   },
 });
 
-const ALLOWED_MIME = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+const ALLOWED_MIME = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 
 function fileFilter(req, file, cb) {
   if (!ALLOWED_MIME.includes(file.mimetype)) {
-    return cb(new Error('Format file harus JPG, PNG, WEBP, atau GIF.'));
+    return cb(new Error("Format file harus JPG, PNG, WEBP, atau GIF."));
   }
   cb(null, true);
 }
