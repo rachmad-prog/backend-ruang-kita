@@ -1,7 +1,7 @@
 const { pool } = require("../config/db");
 const cloudinary = require("../config/cloudinary");
 
-// Kategori yang didukung. Dipakai untuk validasi ringan di creteRoom/updateRoom.
+// Kategori yang didukung. Dipakai untuk validasi ringan di createRoom/updateRoom.
 const ALLOWED_CATEGORIES = [
   "Meeting Room",
   "Aula Konferensi",
